@@ -21,8 +21,11 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -74,7 +77,7 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
         getReactApplicationContext().startActivityForResult(intent, READ_REQUEST_CODE, Bundle.EMPTY);
     }
 
-    // removed @Override temporarily just to get it working on RN0.33 and RN0.32 - will remove
+    @Override
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
         onActivityResult(requestCode, resultCode, data);
     }
@@ -113,8 +116,6 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
             map = metaDataFromContentResolver(uri);
         }
 
-        map.putString("uri", uri.toString());
-
         return map;
     }
 
@@ -123,13 +124,15 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
 
         File outputDir = getReactApplicationContext().getCacheDir();
         try {
-            File downloaded = download(uri, outputDir);
+            String fileName = getFileName(uri);
+            File downloaded = download(uri, outputDir, fileName);
 
             map.putInt(Fields.FILE_SIZE, (int) downloaded.length());
             map.putString(Fields.FILE_NAME, downloaded.getName());
             map.putString(Fields.TYPE, mimeTypeFromName(uri.toString()));
+            map.putString("uri", downloaded.getAbsolutePath());
         } catch (IOException e) {
-            Log.e("DocumentPicker", "Failed to download file", e);
+            Log.e("DocumentPicker", "Failed to download file from uri", e);
         }
 
         return map;
@@ -138,8 +141,19 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
     private WritableMap metaDataFromFile(File file) {
         WritableMap map = Arguments.createMap();
 
+
         if(!file.exists())
             return map;
+
+        File outputDir = getReactApplicationContext().getCacheDir();
+        try {
+            InputStream inputStream = new FileInputStream(file);
+            String fileName = file.getName();
+            File downloaded = downloadFromInputStream(inputStream, outputDir, fileName);
+            map.putString("uri", downloaded.getAbsolutePath());
+        } catch (IOException e) {
+            Log.e("DocumentPicker", "Failed to download file from file", e);
+        }
 
         map.putInt(Fields.FILE_SIZE, (int) file.length());
         map.putString(Fields.FILE_NAME, file.getName());
@@ -150,6 +164,16 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
 
     private WritableMap metaDataFromContentResolver(Uri uri) {
         WritableMap map = Arguments.createMap();
+
+        File outputDir = getReactApplicationContext().getCacheDir();
+        try {
+            InputStream inputStream = getReactApplicationContext().getContentResolver().openInputStream(uri);
+            String fileName = getFileName(uri);
+            File downloaded = downloadFromInputStream(inputStream, outputDir, fileName);
+            map.putString("uri", downloaded.getAbsolutePath());
+        } catch (IOException e) {
+            Log.e("DocumentPicker", "Failed to download file from content resolver", e);
+        }
 
         ContentResolver contentResolver = getReactApplicationContext().getContentResolver();
 
@@ -178,8 +202,30 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
         return map;
     }
 
-    private static File download(Uri uri, File outputDir) throws IOException {
-        File file = File.createTempFile("prefix", "extension", outputDir);
+    private String getFileName(Uri uri) {
+        String result = null;
+        if (uri.getScheme().equals("content")) {
+            Cursor cursor = getReactApplicationContext().getContentResolver().query(uri, null, null, null, null);
+            try {
+                if (cursor != null && cursor.moveToFirst()) {
+                    result = cursor.getString(cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME));
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        if (result == null) {
+            result = uri.getPath();
+            int cut = result.lastIndexOf('/');
+            if (cut != -1) {
+                result = result.substring(cut + 1);
+            }
+        }
+        return result;
+    }
+
+    private static File download(Uri uri, File outputDir, String fileName) throws IOException {
+        File file = File.createTempFile("prefix", fileName, outputDir);
 
         URL url = new URL(uri.toString());
 
@@ -195,6 +241,26 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
             }
         } finally {
             channel.close();
+        }
+    }
+
+    private static File downloadFromInputStream(InputStream inputStream, File outputDir, String fileName) throws IOException {
+        File file = File.createTempFile("prefix", fileName, outputDir);
+        try{
+            FileOutputStream stream = new FileOutputStream(file);
+
+            try {
+                // Transfer bytes from in to out
+                byte[] buf = new byte[1024];
+                int len;
+                while ((len = inputStream.read(buf)) > 0) {
+                    stream.write(buf, 0, len);
+                }
+                return file;
+            } finally {
+                stream.close();
+            }
+        } finally {
         }
     }
 
