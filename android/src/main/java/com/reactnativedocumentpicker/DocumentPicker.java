@@ -84,25 +84,32 @@ public class DocumentPicker extends ReactContextBaseJavaModule implements Activi
 
     // removed @Override temporarily just to get it working on RN0.33 and RN0.32
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode != READ_REQUEST_CODE)
+        if (requestCode != READ_REQUEST_CODE || callback == null)
             return;
 
         if (resultCode != Activity.RESULT_OK) {
             callback.invoke("Bad result code: " + resultCode, null);
+            callback = null;
             return;
         }
 
         if (data == null) {
             callback.invoke("No data", null);
+            callback = null;
             return;
         }
-
+        
+        Uri uri = null;
         try {
-            Uri uri = data.getData();
-            callback.invoke(null, toMapWithMetadata(uri));
+            uri = data.getData();
         } catch (Exception e) {
             Log.e(NAME, "Failed to read", e);
             callback.invoke(e.getMessage(), null);
+            callback = null;
+        }
+        if(uri != null && callback != null) {
+            callback.invoke(null, toMapWithMetadata(uri));
+            callback = null;
         }
     }
 
